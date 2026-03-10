@@ -1,11 +1,11 @@
 
 -- Enums
-CREATE TYPE public.agent_role AS ENUM ('devops', 'qa', 'architect', 'sm', 'po', 'dev');
-CREATE TYPE public.agent_status AS ENUM ('active', 'inactive');
-CREATE TYPE public.story_status AS ENUM ('todo', 'in_progress', 'done', 'blocked');
-CREATE TYPE public.story_priority AS ENUM ('low', 'medium', 'high', 'critical');
-CREATE TYPE public.phase_status AS ENUM ('pending', 'in_progress', 'completed');
-CREATE TYPE public.subtask_status AS ENUM ('pending', 'in_progress', 'completed', 'failed');
+-- CREATE TYPE public.agent_role AS ENUM ('devops', 'qa', 'architect', 'sm', 'po', 'dev');
+-- CREATE TYPE public.agent_status AS ENUM ('active', 'inactive');
+-- CREATE TYPE public.story_status AS ENUM ('todo', 'in_progress', 'done', 'blocked');
+-- CREATE TYPE public.story_priority AS ENUM ('low', 'medium', 'high', 'critical');
+-- CREATE TYPE public.phase_status AS ENUM ('pending', 'in_progress', 'completed');
+-- CREATE TYPE public.subtask_status AS ENUM ('pending', 'in_progress', 'completed', 'failed');
 
 -- Profiles table
 CREATE TABLE public.profiles (

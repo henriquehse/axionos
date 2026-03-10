@@ -20,9 +20,9 @@ export interface RoutingDecision {
 
 /** Model mapping per complexity tier */
 const MODEL_MAP: Record<ComplexityLevel, { model: string; costMultiplier: number }> = {
-  low: { model: "google/gemini-2.5-flash-lite", costMultiplier: 0.2 },
-  medium: { model: "google/gemini-2.5-flash", costMultiplier: 0.5 },
-  high: { model: "google/gemini-2.5-pro", costMultiplier: 1.0 },
+  low: { model: "gemini-2.5-flash", costMultiplier: 0.2 },
+  medium: { model: "gemini-2.5-flash", costMultiplier: 0.5 },
+  high: { model: "gemini-2.5-pro", costMultiplier: 1.0 },
 };
 
 /** Stages that always need high complexity */

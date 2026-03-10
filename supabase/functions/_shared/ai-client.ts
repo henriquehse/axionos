@@ -30,16 +30,31 @@ export interface AIConfig {
 
 /** Get AI configuration based on available API keys */
 export function getAIConfig(): AIConfig {
-  const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
-  const useOpenAI = !!OPENAI_API_KEY;
+  const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+  const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
 
+  if (GEMINI_API_KEY) {
+    return {
+      url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+      key: GEMINI_API_KEY,
+      model: "gemini-2.5-flash",
+      proModel: "gemini-2.5-pro",
+    };
+  } else if (GROQ_API_KEY) {
+    return {
+      url: "https://api.groq.com/openai/v1/chat/completions",
+      key: GROQ_API_KEY,
+      model: "llama-3.3-70b-versatile",
+      proModel: "llama-3.3-70b-versatile",
+    };
+  }
+
+  // Fallback
   return {
-    url: useOpenAI
-      ? "https://api.openai.com/v1/chat/completions"
-      : "https://ai.gateway.lovable.dev/v1/chat/completions",
-    key: useOpenAI ? OPENAI_API_KEY! : (Deno.env.get("LOVABLE_API_KEY") || ""),
-    model: useOpenAI ? "gpt-4o-mini" : "google/gemini-2.5-flash",
-    proModel: useOpenAI ? "gpt-4o-mini" : "google/gemini-2.5-pro",
+    url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    key: "",
+    model: "gemini-2.5-flash",
+    proModel: "gemini-2.5-flash",
   };
 }
 
