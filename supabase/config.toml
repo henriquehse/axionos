@@ -1,0 +1,160 @@
+project_id = "runyuhxgsezsezjypskr"
+
+[functions.generate-planning-content]
+verify_jwt = false
+
+[functions.generate-stories]
+verify_jwt = false
+
+[functions.generate-agents]
+verify_jwt = false
+
+[functions.github-proxy]
+verify_jwt = false
+
+[functions.analyze-artifact]
+verify_jwt = false
+
+[functions.rework-artifact]
+verify_jwt = false
+
+[functions.run-initiative-pipeline]
+verify_jwt = false
+
+[functions.pipeline-discovery]
+verify_jwt = false
+
+[functions.pipeline-squad]
+verify_jwt = false
+
+[functions.pipeline-planning]
+verify_jwt = false
+
+[functions.pipeline-approve]
+verify_jwt = false
+
+[functions.pipeline-reject]
+verify_jwt = false
+
+[functions.pipeline-execution]
+verify_jwt = false
+
+[functions.pipeline-execution-orchestrator]
+verify_jwt = false
+
+[functions.pipeline-execution-worker]
+verify_jwt = false
+
+[functions.pipeline-validation]
+verify_jwt = false
+
+[functions.pipeline-publish]
+verify_jwt = false
+
+[functions.pipeline-fast-modify]
+verify_jwt = false
+
+[functions.pipeline-full-review]
+verify_jwt = false
+
+[functions.pipeline-comprehension]
+verify_jwt = false
+
+[functions.pipeline-architecture]
+verify_jwt = false
+
+[functions.brain-sync]
+verify_jwt = false
+
+[functions.pipeline-deep-validation]
+verify_jwt = false
+
+[functions.pipeline-ci-webhook]
+verify_jwt = false
+
+[functions.pipeline-fix-orchestrator]
+verify_jwt = false
+
+[functions.pipeline-drift-detection]
+verify_jwt = false
+
+[functions.pipeline-runtime-validation]
+verify_jwt = false
+
+[functions.generate-embeddings]
+verify_jwt = false
+
+[functions.github-ci-webhook]
+verify_jwt = false
+
+[functions.error-intelligence]
+verify_jwt = false
+
+[functions.pipeline-preventive-validation]
+verify_jwt = false
+
+[functions.pipeline-architecture-simulation]
+verify_jwt = false
+
+[functions.pipeline-foundation-scaffold]
+verify_jwt = false
+
+[functions.pipeline-module-graph-simulation]
+verify_jwt = false
+
+[functions.pipeline-dependency-intelligence]
+verify_jwt = false
+
+[functions.ecosystem-drift-intelligence]
+verify_jwt = false
+
+[functions.project-bootstrap-intelligence]
+verify_jwt = false
+
+[functions.autonomous-build-repair]
+verify_jwt = false
+
+[functions.supabase-schema-bootstrap]
+verify_jwt = false
+
+[functions.supabase-provisioning-engine]
+verify_jwt = false
+
+[functions.ai-domain-model-analyzer]
+verify_jwt = false
+
+[functions.ai-business-logic-synthesizer]
+verify_jwt = false
+
+[functions.autonomous-api-generator]
+verify_jwt = false
+
+[functions.supabase-data-model-generator]
+verify_jwt = false
+
+[functions.autonomous-ui-generator]
+verify_jwt = false
+
+[functions.adaptive-learning-engine]
+verify_jwt = false
+
+[functions.generate-initiative-blueprint]
+verify_jwt = false
+
+[functions.tenant-architecture-modes]
+verify_jwt = false
+
+[functions.economic-optimization-engine]
+verify_jwt = false
+
+[functions.role-based-experience-engine]
+verify_jwt = false
+
+[functions.one-click-delivery-deploy-assurance-engine]
+verify_jwt = false
+
+[functions.onboarding-templates-vertical-starters-engine]
+verify_jwt = false
+
+[functions.adoption-intelligence-customer-success-engine]
+verify_jwt = false

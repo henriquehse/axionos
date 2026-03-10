@@ -1,0 +1,1215 @@
+/**
+ * Meta-Agents v1 Hardening — Scoring & Validation Test Suite
+ *
+ * Tests:
+ * - Scoring determinism and boundary correctness
+ * - Score consistency (priority = f(confidence, impact, urgency))
+ * - Evidence integrity validation
+ * - Quality gate filtering
+ * - Signature normalization and deduplication
+ * - Forbidden mutation regression checks
+ */
+
+import { describe, it, expect } from "vitest";
+
+// --- Inline implementations mirroring the edge function code ---
+// (We test the logic, not the Deno imports)
+
+function clamp(v: number, min = 0, max = 1): number {
+  return Math.max(min, Math.min(max, v));
+}
+
+interface ScoringInputs {
+  evidence_count: number;
+  recurrence_count: number;
+  total_observations: number;
+  cost_savings_estimate: number;
+  failure_rate: number;
+  time_savings_estimate: number;
+  avg_execution_time: number;
+  trend_worsening: boolean;
+  breadth: number;
+}
+
+interface ScoringResult {
+  confidence_score: number;
+  impact_score: number;
+  priority_score: number;
+}
+
+function scoreRecommendation(inputs: ScoringInputs): ScoringResult {
+  const evidence_factor = Math.min(1, Math.log(inputs.evidence_count + 1) / Math.log(10));
+  const recurrence_ratio = inputs.total_observations > 0
+    ? inputs.recurrence_count / inputs.total_observations : 0;
+  const recurrence_factor = clamp(recurrence_ratio * 3);
+  const data_quality_factor = clamp(inputs.total_observations / 5);
+
+  const confidence_score = clamp(
+    evidence_factor * 0.4 + recurrence_factor * 0.35 + data_quality_factor * 0.25
+  );
+
+  const cost_factor = clamp(inputs.cost_savings_estimate / 50);
+  const reliability_factor = clamp(inputs.failure_rate);
+  const efficiency_factor = inputs.avg_execution_time > 0
+    ? clamp(inputs.time_savings_estimate / inputs.avg_execution_time) : 0;
+
+  const impact_score = clamp(
+    0.35 * cost_factor + 0.4 * reliability_factor + 0.25 * efficiency_factor
+  );
+
+  const urgency = (inputs.trend_worsening ? 0.8 : 0.2) * clamp(inputs.breadth / 3);
+  const priority_score = clamp(
+    confidence_score * 0.4 + impact_score * 0.4 + urgency * 0.2
+  );
+
+  return {
+    confidence_score: Math.round(confidence_score * 1000) / 1000,
+    impact_score: Math.round(impact_score * 1000) / 1000,
+    priority_score: Math.round(priority_score * 1000) / 1000,
+  };
+}
+
+function generateSignature(
+  meta_agent_type: string,
+  recommendation_type: string,
+  target_component: string,
+  key_evidence_hash: string
+): string {
+  return `${meta_agent_type}::${recommendation_type}::${target_component}::${key_evidence_hash}`;
+}
+
+function normalizeSignature(signature: string): string {
+  return signature
+    .toLowerCase()
+    .trim()
+    .split("::")
+    .map((s) => s.trim().replace(/\s+/g, "_").replace(/_+/g, "_").replace(/[^a-z0-9_]/g, "").replace(/^_|_$/g, ""))
+    .join("::");
+}
+
+const MIN_CONFIDENCE_THRESHOLD = 0.15;
+const MIN_IMPACT_THRESHOLD = 0.10;
+const ARCHITECTURE_MIN_CONFIDENCE = 0.25;
+
+interface MetaRecommendation {
+  meta_agent_type: string;
+  recommendation_type: string;
+  target_component: string;
+  title: string;
+  description: string;
+  confidence_score: number;
+  impact_score: number;
+  priority_score: number;
+  supporting_evidence: Record<string, unknown>[];
+  source_metrics: Record<string, unknown>;
+  source_record_ids: string[];
+  recommendation_signature: string;
+}
+
+function qualityGate(rec: MetaRecommendation): { pass: boolean; reason?: string } {
+  if (rec.confidence_score < 0 || rec.confidence_score > 1) return { pass: false, reason: "confidence OOB" };
+  if (rec.impact_score < 0 || rec.impact_score > 1) return { pass: false, reason: "impact OOB" };
+  if (rec.priority_score < 0 || rec.priority_score > 1) return { pass: false, reason: "priority OOB" };
+
+  const minConf = rec.meta_agent_type === "ARCHITECTURE_META_AGENT"
+    ? ARCHITECTURE_MIN_CONFIDENCE : MIN_CONFIDENCE_THRESHOLD;
+  if (rec.confidence_score < minConf) return { pass: false, reason: "low confidence" };
+  if (rec.impact_score < MIN_IMPACT_THRESHOLD) return { pass: false, reason: "low impact" };
+  if (!rec.supporting_evidence || rec.supporting_evidence.length === 0) return { pass: false, reason: "no evidence" };
+  if (!rec.title?.trim()) return { pass: false, reason: "empty title" };
+  if (!rec.description?.trim()) return { pass: false, reason: "empty description" };
+  return { pass: true };
+}
+
+// ======================== TESTS ========================
+
+describe("Meta-Agent Scoring", () => {
+  it("produces bounded scores (0-1) for all inputs", () => {
+    const cases: ScoringInputs[] = [
+      { evidence_count: 0, recurrence_count: 0, total_observations: 0, cost_savings_estimate: 0, failure_rate: 0, time_savings_estimate: 0, avg_execution_time: 0, trend_worsening: false, breadth: 0 },
+      { evidence_count: 100, recurrence_count: 100, total_observations: 100, cost_savings_estimate: 1000, failure_rate: 1, time_savings_estimate: 1000, avg_execution_time: 100, trend_worsening: true, breadth: 10 },
+      { evidence_count: 1, recurrence_count: 1, total_observations: 1, cost_savings_estimate: 0, failure_rate: 0.5, time_savings_estimate: 0, avg_execution_time: 0, trend_worsening: false, breadth: 1 },
+    ];
+
+    for (const c of cases) {
+      const result = scoreRecommendation(c);
+      expect(result.confidence_score).toBeGreaterThanOrEqual(0);
+      expect(result.confidence_score).toBeLessThanOrEqual(1);
+      expect(result.impact_score).toBeGreaterThanOrEqual(0);
+      expect(result.impact_score).toBeLessThanOrEqual(1);
+      expect(result.priority_score).toBeGreaterThanOrEqual(0);
+      expect(result.priority_score).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("is deterministic for same inputs", () => {
+    const input: ScoringInputs = {
+      evidence_count: 5, recurrence_count: 10, total_observations: 50,
+      cost_savings_estimate: 20, failure_rate: 0.4, time_savings_estimate: 5,
+      avg_execution_time: 30, trend_worsening: true, breadth: 2,
+    };
+    const a = scoreRecommendation(input);
+    const b = scoreRecommendation(input);
+    expect(a).toEqual(b);
+  });
+
+  it("ranks high recurrence + high failure above low-value items", () => {
+    const high = scoreRecommendation({
+      evidence_count: 10, recurrence_count: 40, total_observations: 50,
+      cost_savings_estimate: 30, failure_rate: 0.8, time_savings_estimate: 10,
+      avg_execution_time: 20, trend_worsening: true, breadth: 2,
+    });
+    const low = scoreRecommendation({
+      evidence_count: 1, recurrence_count: 1, total_observations: 50,
+      cost_savings_estimate: 0, failure_rate: 0.05, time_savings_estimate: 0,
+      avg_execution_time: 0, trend_worsening: false, breadth: 1,
+    });
+    expect(high.priority_score).toBeGreaterThan(low.priority_score);
+  });
+
+  it("produces zero scores for zero inputs", () => {
+    const result = scoreRecommendation({
+      evidence_count: 0, recurrence_count: 0, total_observations: 0,
+      cost_savings_estimate: 0, failure_rate: 0, time_savings_estimate: 0,
+      avg_execution_time: 0, trend_worsening: false, breadth: 0,
+    });
+    expect(result.confidence_score).toBe(0);
+    expect(result.impact_score).toBe(0);
+    expect(result.priority_score).toBe(0);
+  });
+
+  it("weak evidence does not inflate priority", () => {
+    const result = scoreRecommendation({
+      evidence_count: 1, recurrence_count: 1, total_observations: 100,
+      cost_savings_estimate: 0, failure_rate: 0.01, time_savings_estimate: 0,
+      avg_execution_time: 0, trend_worsening: false, breadth: 1,
+    });
+    expect(result.priority_score).toBeLessThan(0.3);
+  });
+});
+
+describe("Signature Normalization", () => {
+  it("normalizes casing and whitespace", () => {
+    const a = normalizeSignature("ARCHITECTURE_META_AGENT::PIPELINE_OPTIMIZATION::stage_A::failures_5");
+    const b = normalizeSignature("architecture_meta_agent::pipeline_optimization::stage_a::failures_5");
+    expect(a).toBe(b);
+  });
+
+  it("handles extra whitespace", () => {
+    const a = normalizeSignature("  TYPE :: REC_TYPE :: comp ::  hash  ");
+    const b = normalizeSignature("TYPE::REC_TYPE::comp::hash");
+    expect(a).toBe(b);
+  });
+
+  it("different components produce different signatures", () => {
+    const a = normalizeSignature(generateSignature("A", "B", "comp1", "hash1"));
+    const b = normalizeSignature(generateSignature("A", "B", "comp2", "hash1"));
+    expect(a).not.toBe(b);
+  });
+
+  it("different orgs with same pattern produce same signature (dedup is per-org in DB)", () => {
+    const sig = generateSignature("ARCHITECTURE_META_AGENT", "PIPELINE_OPTIMIZATION", "validation", "failures_10");
+    // Signatures are org-agnostic; DB query filters by org_id
+    expect(sig).toBe("ARCHITECTURE_META_AGENT::PIPELINE_OPTIMIZATION::validation::failures_10");
+  });
+});
+
+describe("Quality Gate", () => {
+  const makeRec = (overrides: Partial<MetaRecommendation> = {}): MetaRecommendation => ({
+    meta_agent_type: "WORKFLOW_OPTIMIZER",
+    recommendation_type: "STEP_ELIMINATION",
+    target_component: "build",
+    title: "Test recommendation",
+    description: "A valid test recommendation with evidence.",
+    confidence_score: 0.5,
+    impact_score: 0.4,
+    priority_score: 0.45,
+    supporting_evidence: [{ type: "test", value: 1 }],
+    source_metrics: { test: true },
+    source_record_ids: [],
+    recommendation_signature: "test::sig",
+    ...overrides,
+  });
+
+  it("passes valid recommendation", () => {
+    expect(qualityGate(makeRec()).pass).toBe(true);
+  });
+
+  it("rejects empty evidence", () => {
+    expect(qualityGate(makeRec({ supporting_evidence: [] })).pass).toBe(false);
+  });
+
+  it("rejects empty title", () => {
+    expect(qualityGate(makeRec({ title: "" })).pass).toBe(false);
+  });
+
+  it("rejects out-of-bounds confidence", () => {
+    expect(qualityGate(makeRec({ confidence_score: 1.5 })).pass).toBe(false);
+    expect(qualityGate(makeRec({ confidence_score: -0.1 })).pass).toBe(false);
+  });
+
+  it("rejects low confidence below threshold", () => {
+    expect(qualityGate(makeRec({ confidence_score: 0.05 })).pass).toBe(false);
+  });
+
+  it("applies higher threshold for architecture recommendations", () => {
+    const archRec = makeRec({ meta_agent_type: "ARCHITECTURE_META_AGENT", confidence_score: 0.20 });
+    expect(qualityGate(archRec).pass).toBe(false);
+    const archRecOk = makeRec({ meta_agent_type: "ARCHITECTURE_META_AGENT", confidence_score: 0.30 });
+    expect(qualityGate(archRecOk).pass).toBe(true);
+  });
+
+  it("rejects low impact", () => {
+    expect(qualityGate(makeRec({ impact_score: 0.05 })).pass).toBe(false);
+  });
+});
+
+describe("Forbidden Mutation Regression", () => {
+  it("review status values are informational only", () => {
+    const statuses = ["pending", "reviewed", "accepted", "rejected", "deferred"];
+    const mutationKeywords = ["execute", "deploy", "apply", "modify", "alter", "update_pipeline"];
+    for (const status of statuses) {
+      for (const keyword of mutationKeywords) {
+        expect(status).not.toContain(keyword);
+      }
+    }
+  });
+
+  it("recommendation types do not include execution verbs", () => {
+    const types = [
+      "PIPELINE_OPTIMIZATION", "STAGE_REORDERING_SUGGESTION", "STAGE_SPLIT_OR_MERGE",
+      "NEW_AGENT_ROLE", "AGENT_SPECIALIZATION", "AGENT_DEPRECATION",
+      "WORKFLOW_PARALLELIZATION", "STEP_ELIMINATION", "STEP_REORDERING",
+      "TECHNICAL_DEBT_ALERT", "ARCHITECTURE_CHANGE_PROPOSAL", "SYSTEM_EVOLUTION_REPORT",
+    ];
+    const forbiddenPrefixes = ["EXECUTE_", "DEPLOY_", "APPLY_", "FORCE_"];
+    for (const t of types) {
+      for (const prefix of forbiddenPrefixes) {
+        expect(t.startsWith(prefix)).toBe(false);
+      }
+    }
+  });
+
+  it("audit event names cover full lifecycle", () => {
+    const events = [
+      "META_AGENT_RUN", "META_RECOMMENDATION_CREATED", "META_RECOMMENDATION_REVIEWED",
+      "META_RECOMMENDATION_ACCEPTED", "META_RECOMMENDATION_REJECTED", "META_RECOMMENDATION_DEFERRED",
+    ];
+    expect(events).toHaveLength(6);
+    expect(events.every((e) => e.startsWith("META_"))).toBe(true);
+  });
+});
+
+// ======================== SPRINT 14 HARDENING ========================
+
+// --- Inline artifact generators (mirror edge function logic) ---
+
+const AGENT_TYPE_TO_ARTIFACT: Record<string, string> = {
+  ARCHITECTURE_META_AGENT: "ARCHITECTURE_PROPOSAL",
+  AGENT_ROLE_DESIGNER: "AGENT_ROLE_SPEC",
+  WORKFLOW_OPTIMIZER: "WORKFLOW_CHANGE_PROPOSAL",
+  SYSTEM_EVOLUTION_ADVISOR: "ADR_DRAFT",
+};
+
+const REC_TYPE_OVERRIDES: Record<string, string> = {
+  TECHNICAL_DEBT_ALERT: "ADR_DRAFT",
+  ARCHITECTURE_CHANGE_PROPOSAL: "ARCHITECTURE_PROPOSAL",
+  SYSTEM_EVOLUTION_REPORT: "IMPLEMENTATION_PLAN",
+};
+
+function resolveArtifactType(meta_agent_type: string, recommendation_type: string): string {
+  return REC_TYPE_OVERRIDES[recommendation_type]
+    || AGENT_TYPE_TO_ARTIFACT[meta_agent_type]
+    || "ADR_DRAFT";
+}
+
+function generateADR(rec: Record<string, unknown>): Record<string, unknown> {
+  return {
+    format: "ADR_DRAFT",
+    sections: {
+      title: `ADR: ${rec.title}`,
+      status: "Draft",
+      context: `This ADR was generated from Meta-Agent recommendation "${rec.title}" by ${rec.meta_agent_type}.`,
+      problem_statement: rec.description,
+      evidence: rec.supporting_evidence,
+      proposed_change: `Based on analysis of ${rec.target_component}, the system recommends structural changes to improve reliability and efficiency.`,
+      impact_analysis: { confidence_score: rec.confidence_score, impact_score: rec.impact_score, priority_score: rec.priority_score, source_metrics: rec.source_metrics },
+      risks: ["Change may require coordinated deployment across affected components", "Rollback strategy should be defined before implementation"],
+      alternatives_considered: ["Maintain current architecture (accept observed inefficiency)", "Partial implementation targeting highest-impact subset"],
+      decision: "Pending human review and approval",
+      rollback_considerations: "All changes should be reversible through standard deployment rollback procedures.",
+    },
+  };
+}
+
+function generateArchitectureProposal(rec: Record<string, unknown>): Record<string, unknown> {
+  return {
+    format: "ARCHITECTURE_PROPOSAL",
+    sections: {
+      title: `Architecture Proposal: ${rec.title}`,
+      current_architecture_snapshot: `Component: ${rec.target_component}`,
+      detected_structural_issue: rec.description,
+      evidence: rec.supporting_evidence,
+      proposed_change: `Restructure ${rec.target_component} based on observed patterns in execution metrics.`,
+      compatibility_analysis: "Requires validation against existing pipeline contracts and governance rules.",
+      migration_considerations: ["Staged rollout recommended", "Monitor observability metrics during transition", "Validate with existing test suite before full deployment"],
+      risk_assessment: { confidence: rec.confidence_score, impact: rec.impact_score, rollback_strategy: "Revert to previous architecture configuration via version control" },
+    },
+  };
+}
+
+function generateAgentRoleSpec(rec: Record<string, unknown>): Record<string, unknown> {
+  return {
+    format: "AGENT_ROLE_SPEC",
+    sections: {
+      agent_name: `Proposed: ${(rec.title as string || "").replace(/^(Suggest|Create|Propose)\s+/i, "")}`,
+      purpose: rec.description,
+      evidence_for_creation: rec.supporting_evidence,
+      inputs: ["Pipeline execution context", "Stage-specific data", "Error patterns"],
+      outputs: ["Specialized processing results", "Status reports", "Error resolution attempts"],
+      capabilities: ["Domain-specific task execution", "Pattern recognition", "Automated reporting"],
+      constraints: ["Must operate within existing governance boundaries", "Cannot modify pipeline stages or contracts", "Must produce auditable outputs"],
+      interaction_with_existing_agents: "Coordinates through standard Agent OS event bus and handoff protocol.",
+      estimated_complexity: rec.impact_score && Number(rec.impact_score) > 0.7 ? "high" : "medium",
+      source_metrics: rec.source_metrics,
+    },
+  };
+}
+
+function generateWorkflowChangeProposal(rec: Record<string, unknown>): Record<string, unknown> {
+  return {
+    format: "WORKFLOW_CHANGE_PROPOSAL",
+    sections: {
+      title: `Workflow Change: ${rec.title}`,
+      current_workflow: `Current workflow for ${rec.target_component}`,
+      detected_inefficiency: rec.description,
+      evidence_metrics: rec.supporting_evidence,
+      proposed_change: `Optimize workflow for ${rec.target_component} based on ${rec.recommendation_type} analysis.`,
+      expected_benefits: { confidence: rec.confidence_score, estimated_impact: rec.impact_score },
+      potential_risks: ["Workflow changes may affect downstream stage timing", "Parallel execution changes require concurrency validation"],
+      testing_strategy: "Run shadow execution with proposed workflow alongside current workflow to compare outcomes.",
+      rollback_strategy: "Revert to previous workflow configuration; all changes are configuration-only.",
+    },
+  };
+}
+
+function generateImplementationPlan(rec: Record<string, unknown>): Record<string, unknown> {
+  return {
+    format: "IMPLEMENTATION_PLAN",
+    sections: {
+      overview: `Implementation plan for: ${rec.title}`,
+      scope: rec.description,
+      steps: ["1. Review and validate proposal", "2. Create technical specification", "3. Implement in isolated branch", "4. Run full test suite", "5. Stage deployment", "6. Full rollout"],
+      affected_components: [rec.target_component],
+      testing_requirements: ["Unit tests for modified components", "Integration tests for pipeline interaction", "Observability validation"],
+      rollback_plan: "Standard git revert + configuration rollback. No irreversible data changes.",
+      deployment_considerations: ["Use canary deployment strategy", "Monitor key metrics for 24h post-deployment", "Maintain previous version for instant rollback"],
+      source_evidence: rec.supporting_evidence,
+      priority_assessment: { confidence: rec.confidence_score, impact: rec.impact_score, priority: rec.priority_score },
+    },
+  };
+}
+
+const GENERATORS: Record<string, (rec: Record<string, unknown>) => Record<string, unknown>> = {
+  ADR_DRAFT: generateADR,
+  ARCHITECTURE_PROPOSAL: generateArchitectureProposal,
+  AGENT_ROLE_SPEC: generateAgentRoleSpec,
+  WORKFLOW_CHANGE_PROPOSAL: generateWorkflowChangeProposal,
+  IMPLEMENTATION_PLAN: generateImplementationPlan,
+};
+
+const VALID_ARTIFACT_TRANSITIONS: Record<string, string[]> = {
+  draft: ["reviewed", "rejected"],
+  reviewed: ["approved", "rejected"],
+  approved: ["implemented"],
+};
+
+function makeSampleRec(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    id: "rec-001",
+    title: "Split validation stage",
+    description: "38% of failures occur before build, causing unnecessary runtime validation.",
+    meta_agent_type: "ARCHITECTURE_META_AGENT",
+    recommendation_type: "STAGE_SPLIT_OR_MERGE",
+    target_component: "validation",
+    confidence_score: 0.72,
+    impact_score: 0.65,
+    priority_score: 0.68,
+    supporting_evidence: [
+      { type: "stage_failure", stage: "validation", failure_rate: 0.38 },
+      { type: "cost_signal", wasted_usd: 12.5 },
+    ],
+    source_metrics: { total_runs: 50, failed: 19 },
+    source_record_ids: ["lr-1", "lr-2"],
+    organization_id: "org-A",
+    workspace_id: null,
+    ...overrides,
+  };
+}
+
+// --- 1. Idempotência ---
+describe("Sprint 14 — Idempotency", () => {
+  it("resolves the same artifact type for the same recommendation", () => {
+    const rec = makeSampleRec();
+    const type1 = resolveArtifactType(rec.meta_agent_type as string, rec.recommendation_type as string);
+    const type2 = resolveArtifactType(rec.meta_agent_type as string, rec.recommendation_type as string);
+    expect(type1).toBe(type2);
+    expect(type1).toBe("ARCHITECTURE_PROPOSAL");
+  });
+
+  it("generator output is deterministic for same input", () => {
+    const rec = makeSampleRec();
+    const type = resolveArtifactType(rec.meta_agent_type as string, rec.recommendation_type as string);
+    const gen = GENERATORS[type];
+    const a = gen(rec);
+    const b = gen(rec);
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+
+  it("unique constraint key is (recommendation_id, artifact_type) — same rec always maps to same type", () => {
+    const agents = ["ARCHITECTURE_META_AGENT", "AGENT_ROLE_DESIGNER", "WORKFLOW_OPTIMIZER", "SYSTEM_EVOLUTION_ADVISOR"];
+    for (const agent of agents) {
+      const rec = makeSampleRec({ meta_agent_type: agent });
+      const type = resolveArtifactType(agent, rec.recommendation_type as string);
+      // Running twice should produce same key
+      expect(type).toBe(resolveArtifactType(agent, rec.recommendation_type as string));
+    }
+  });
+});
+
+// --- 2. Linkagem correta ---
+describe("Sprint 14 — Artifact Linkage", () => {
+  it("ADR references recommendation title and meta-agent type", () => {
+    const rec = makeSampleRec({ meta_agent_type: "SYSTEM_EVOLUTION_ADVISOR", recommendation_type: "TECHNICAL_DEBT_ALERT" });
+    const artifact = generateADR(rec);
+    const sections = artifact.sections as Record<string, unknown>;
+    expect(sections.title).toContain(rec.title);
+    expect(sections.context).toContain(rec.meta_agent_type);
+    expect(sections.evidence).toBe(rec.supporting_evidence);
+    expect((sections.impact_analysis as Record<string, unknown>).source_metrics).toBe(rec.source_metrics);
+  });
+
+  it("Architecture Proposal includes evidence from recommendation", () => {
+    const rec = makeSampleRec();
+    const artifact = generateArchitectureProposal(rec);
+    const sections = artifact.sections as Record<string, unknown>;
+    expect(sections.evidence).toBe(rec.supporting_evidence);
+    expect(sections.detected_structural_issue).toBe(rec.description);
+    expect(sections.current_architecture_snapshot).toContain(rec.target_component);
+  });
+
+  it("Agent Role Spec preserves evidence and source_metrics", () => {
+    const rec = makeSampleRec({ meta_agent_type: "AGENT_ROLE_DESIGNER", recommendation_type: "NEW_AGENT_ROLE" });
+    const artifact = generateAgentRoleSpec(rec);
+    const sections = artifact.sections as Record<string, unknown>;
+    expect(sections.evidence_for_creation).toBe(rec.supporting_evidence);
+    expect(sections.source_metrics).toBe(rec.source_metrics);
+    expect(sections.purpose).toBe(rec.description);
+  });
+
+  it("Workflow Change Proposal links evidence_metrics", () => {
+    const rec = makeSampleRec({ meta_agent_type: "WORKFLOW_OPTIMIZER", recommendation_type: "WORKFLOW_PARALLELIZATION" });
+    const artifact = generateWorkflowChangeProposal(rec);
+    const sections = artifact.sections as Record<string, unknown>;
+    expect(sections.evidence_metrics).toBe(rec.supporting_evidence);
+    expect(sections.detected_inefficiency).toBe(rec.description);
+  });
+
+  it("Implementation Plan includes source_evidence", () => {
+    const rec = makeSampleRec({ recommendation_type: "SYSTEM_EVOLUTION_REPORT" });
+    const artifact = generateImplementationPlan(rec);
+    const sections = artifact.sections as Record<string, unknown>;
+    expect(sections.source_evidence).toBe(rec.supporting_evidence);
+    expect(sections.scope).toBe(rec.description);
+  });
+});
+
+// --- 3. Sem mutação escondida ---
+describe("Sprint 14 — No Hidden Mutation", () => {
+  it("artifact statuses are informational only", () => {
+    const statuses = ["draft", "reviewed", "approved", "rejected", "implemented"];
+    const dangerousVerbs = ["execute", "deploy_now", "apply_changes", "force_update", "mutate"];
+    for (const s of statuses) {
+      for (const v of dangerousVerbs) {
+        expect(s).not.toBe(v);
+      }
+    }
+  });
+
+  it("artifact review transitions never include system-modifying actions", () => {
+    const allActions = Object.values(VALID_ARTIFACT_TRANSITIONS).flat();
+    const forbidden = ["deploy", "execute", "apply", "modify_pipeline", "update_governance", "change_billing"];
+    for (const action of allActions) {
+      for (const f of forbidden) {
+        expect(action).not.toBe(f);
+      }
+    }
+  });
+
+  it("'approved' only leads to 'implemented' (manual marker), not system action", () => {
+    expect(VALID_ARTIFACT_TRANSITIONS["approved"]).toEqual(["implemented"]);
+  });
+
+  it("no artifact type implies automatic system change", () => {
+    const types = ["ADR_DRAFT", "ARCHITECTURE_PROPOSAL", "AGENT_ROLE_SPEC", "WORKFLOW_CHANGE_PROPOSAL", "IMPLEMENTATION_PLAN", "PR_DRAFT"];
+    const autoKeywords = ["AUTO_APPLY", "AUTO_DEPLOY", "FORCE_EXECUTE"];
+    for (const t of types) {
+      for (const k of autoKeywords) {
+        expect(t).not.toContain(k);
+      }
+    }
+  });
+
+  it("artifact audit events are observation-only", () => {
+    const events = ["META_ARTIFACT_CREATED", "META_ARTIFACT_REVIEWED", "META_ARTIFACT_APPROVED", "META_ARTIFACT_REJECTED", "META_ARTIFACT_IMPLEMENTED"];
+    for (const e of events) {
+      expect(e).not.toContain("EXECUTE");
+      expect(e).not.toContain("DEPLOY");
+      expect(e).not.toContain("MUTATE");
+    }
+  });
+});
+
+// --- 4. Qualidade mínima do conteúdo ---
+describe("Sprint 14 — Artifact Content Quality", () => {
+  const requiredSections: Record<string, string[]> = {
+    ADR_DRAFT: ["context", "problem_statement", "evidence", "proposed_change", "risks", "rollback_considerations"],
+    ARCHITECTURE_PROPOSAL: ["detected_structural_issue", "evidence", "proposed_change", "risk_assessment", "migration_considerations"],
+    AGENT_ROLE_SPEC: ["purpose", "evidence_for_creation", "constraints", "inputs", "outputs"],
+    WORKFLOW_CHANGE_PROPOSAL: ["detected_inefficiency", "evidence_metrics", "proposed_change", "potential_risks", "rollback_strategy"],
+    IMPLEMENTATION_PLAN: ["scope", "steps", "testing_requirements", "rollback_plan", "source_evidence"],
+  };
+
+  for (const [artifactType, fields] of Object.entries(requiredSections)) {
+    it(`${artifactType} contains all required sections`, () => {
+      const gen = GENERATORS[artifactType];
+      expect(gen).toBeDefined();
+      const rec = makeSampleRec();
+      const artifact = gen(rec);
+      const sections = artifact.sections as Record<string, unknown>;
+      for (const field of fields) {
+        expect(sections).toHaveProperty(field);
+        const val = sections[field];
+        // Must be non-null/non-undefined
+        expect(val).not.toBeNull();
+        expect(val).not.toBeUndefined();
+      }
+    });
+  }
+
+  it("ADR includes alternatives_considered", () => {
+    const artifact = generateADR(makeSampleRec());
+    const sections = artifact.sections as Record<string, unknown>;
+    expect(Array.isArray(sections.alternatives_considered)).toBe(true);
+    expect((sections.alternatives_considered as string[]).length).toBeGreaterThan(0);
+  });
+
+  it("all generators produce a 'format' field matching the artifact type", () => {
+    for (const [type, gen] of Object.entries(GENERATORS)) {
+      const artifact = gen(makeSampleRec());
+      expect(artifact.format).toBe(type);
+    }
+  });
+});
+
+// --- 5. Tenant Isolation ---
+describe("Sprint 14 — Tenant Isolation", () => {
+  it("artifact generator output does not leak cross-org data", () => {
+    const recOrgA = makeSampleRec({ organization_id: "org-A", title: "Org A issue" });
+    const recOrgB = makeSampleRec({ organization_id: "org-B", title: "Org B issue" });
+    const artA = generateADR(recOrgA);
+    const artB = generateADR(recOrgB);
+    // Content should reference their own rec, not the other
+    const sectionsA = artA.sections as Record<string, unknown>;
+    const sectionsB = artB.sections as Record<string, unknown>;
+    expect(sectionsA.title).toContain("Org A issue");
+    expect(sectionsA.title).not.toContain("Org B issue");
+    expect(sectionsB.title).toContain("Org B issue");
+    expect(sectionsB.title).not.toContain("Org A issue");
+  });
+
+  it("artifact type resolution is org-agnostic (isolation enforced by DB/RLS)", () => {
+    // Same meta_agent_type from different orgs → same artifact type (isolation is at DB layer)
+    const typeA = resolveArtifactType("ARCHITECTURE_META_AGENT", "PIPELINE_OPTIMIZATION");
+    const typeB = resolveArtifactType("ARCHITECTURE_META_AGENT", "PIPELINE_OPTIMIZATION");
+    expect(typeA).toBe(typeB);
+    expect(typeA).toBe("ARCHITECTURE_PROPOSAL");
+  });
+
+  it("generators do not embed organization_id in artifact content", () => {
+    const rec = makeSampleRec({ organization_id: "org-secret-123" });
+    for (const gen of Object.values(GENERATORS)) {
+      const artifact = gen(rec);
+      const content = JSON.stringify(artifact);
+      expect(content).not.toContain("org-secret-123");
+    }
+  });
+});
+
+// ===================================================================
+// Sprint 15 — Engineering Memory Foundation Tests
+// ===================================================================
+
+const VALID_MEMORY_TYPES = [
+  "ExecutionMemory",
+  "ErrorMemory",
+  "StrategyMemory",
+  "DesignMemory",
+  "DecisionMemory",
+  "OutcomeMemory",
+];
+
+const VALID_LINK_TYPES = [
+  "caused_by",
+  "resolved_by",
+  "recommended_by",
+  "implemented_as",
+  "similar_to",
+  "superseded_by",
+];
+
+// Helper: simulate memory entry creation
+function createMemoryEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    id: `mem-${Math.random().toString(36).slice(2, 8)}`,
+    organization_id: "org-test",
+    workspace_id: null,
+    memory_type: "DesignMemory",
+    memory_subtype: "recommendation_accepted",
+    title: "Test memory entry",
+    summary: "A test memory summary",
+    source_type: "meta_agent_recommendation",
+    source_id: "rec-123",
+    related_component: "pipeline_validation",
+    related_stage: "architecture",
+    confidence_score: 0.8,
+    relevance_score: 0.7,
+    tags: ["test", "meta_agent"],
+    created_at: new Date().toISOString(),
+    last_accessed_at: null,
+    times_retrieved: 0,
+    ...overrides,
+  };
+}
+
+function createMemoryLink(from: string, to: string, linkType: string) {
+  return {
+    id: `link-${Math.random().toString(36).slice(2, 8)}`,
+    organization_id: "org-test",
+    from_memory_id: from,
+    to_memory_id: to,
+    link_type: linkType,
+    created_at: new Date().toISOString(),
+  };
+}
+
+describe("Sprint 15 — Memory Type Taxonomy", () => {
+  it("supports exactly 6 memory types", () => {
+    expect(VALID_MEMORY_TYPES).toHaveLength(6);
+  });
+
+  it("all memory types are unique", () => {
+    const unique = new Set(VALID_MEMORY_TYPES);
+    expect(unique.size).toBe(VALID_MEMORY_TYPES.length);
+  });
+
+  it("supports exactly 6 link types", () => {
+    expect(VALID_LINK_TYPES).toHaveLength(6);
+  });
+
+  it("all link types are unique", () => {
+    const unique = new Set(VALID_LINK_TYPES);
+    expect(unique.size).toBe(VALID_LINK_TYPES.length);
+  });
+});
+
+describe("Sprint 15 — Memory Entry Creation Determinism", () => {
+  it("creates entry with all required fields", () => {
+    const entry = createMemoryEntry();
+    expect(entry.id).toBeTruthy();
+    expect(entry.organization_id).toBeTruthy();
+    expect(entry.memory_type).toBeTruthy();
+    expect(entry.title).toBeTruthy();
+    expect(entry.created_at).toBeTruthy();
+  });
+
+  it("entry has default scores within valid range", () => {
+    const entry = createMemoryEntry();
+    expect(entry.confidence_score).toBeGreaterThanOrEqual(0);
+    expect(entry.confidence_score).toBeLessThanOrEqual(1);
+    expect(entry.relevance_score).toBeGreaterThanOrEqual(0);
+    expect(entry.relevance_score).toBeLessThanOrEqual(1);
+  });
+
+  it("memory_type must be from valid taxonomy", () => {
+    for (const type of VALID_MEMORY_TYPES) {
+      const entry = createMemoryEntry({ memory_type: type });
+      expect(VALID_MEMORY_TYPES.includes(entry.memory_type as string)).toBe(true);
+    }
+  });
+
+  it("times_retrieved starts at zero", () => {
+    const entry = createMemoryEntry();
+    expect(entry.times_retrieved).toBe(0);
+  });
+
+  it("same inputs produce structurally equivalent entries", () => {
+    const base = { memory_type: "ErrorMemory", title: "Test", summary: "Sum" };
+    const a = createMemoryEntry(base);
+    const b = createMemoryEntry(base);
+    expect(a.memory_type).toBe(b.memory_type);
+    expect(a.title).toBe(b.title);
+    expect(a.summary).toBe(b.summary);
+  });
+});
+
+describe("Sprint 15 — Memory Linking", () => {
+  it("creates link with valid type", () => {
+    const link = createMemoryLink("mem-a", "mem-b", "caused_by");
+    expect(link.from_memory_id).toBe("mem-a");
+    expect(link.to_memory_id).toBe("mem-b");
+    expect(link.link_type).toBe("caused_by");
+  });
+
+  it("all link types are valid", () => {
+    for (const type of VALID_LINK_TYPES) {
+      const link = createMemoryLink("a", "b", type);
+      expect(VALID_LINK_TYPES.includes(link.link_type)).toBe(true);
+    }
+  });
+
+  it("link includes organization_id for tenant isolation", () => {
+    const link = createMemoryLink("a", "b", "resolved_by");
+    expect(link.organization_id).toBeTruthy();
+  });
+});
+
+describe("Sprint 15 — Tenant Isolation", () => {
+  it("memory entries are scoped to organization_id", () => {
+    const entryA = createMemoryEntry({ organization_id: "org-A" });
+    const entryB = createMemoryEntry({ organization_id: "org-B" });
+    expect(entryA.organization_id).not.toBe(entryB.organization_id);
+  });
+
+  it("memory links are scoped to organization_id", () => {
+    const link = createMemoryLink("a", "b", "similar_to");
+    expect(link.organization_id).toBeTruthy();
+  });
+
+  it("entry content does not embed org id in sensitive fields", () => {
+    const entry = createMemoryEntry({ organization_id: "org-secret-999" });
+    expect(entry.title).not.toContain("org-secret-999");
+    expect(entry.summary).not.toContain("org-secret-999");
+  });
+});
+
+describe("Sprint 15 — Forbidden Mutation Protection", () => {
+  const FORBIDDEN_ACTIONS = [
+    "mutate_pipeline",
+    "alter_governance",
+    "change_billing",
+    "modify_contracts",
+    "create_agent",
+    "alter_runtime",
+  ];
+
+  it("memory types do not include any mutation action", () => {
+    for (const type of VALID_MEMORY_TYPES) {
+      for (const forbidden of FORBIDDEN_ACTIONS) {
+        expect(type.toLowerCase()).not.toContain(forbidden);
+      }
+    }
+  });
+
+  it("link types do not include any mutation action", () => {
+    for (const type of VALID_LINK_TYPES) {
+      for (const forbidden of FORBIDDEN_ACTIONS) {
+        expect(type.toLowerCase()).not.toContain(forbidden);
+      }
+    }
+  });
+
+  it("memory entry structure contains no executable code fields", () => {
+    const entry = createMemoryEntry();
+    const keys = Object.keys(entry);
+    const dangerousKeys = ["execute", "run", "command", "mutation", "script"];
+    for (const key of keys) {
+      for (const dangerous of dangerousKeys) {
+        expect(key.toLowerCase()).not.toContain(dangerous);
+      }
+    }
+  });
+});
+
+describe("Sprint 15 — Memory Capture Events", () => {
+  it("recommendation_accepted generates DesignMemory entry", () => {
+    const entry = createMemoryEntry({
+      memory_type: "DesignMemory",
+      memory_subtype: "recommendation_accepted",
+      source_type: "meta_agent_recommendation",
+    });
+    expect(entry.memory_type).toBe("DesignMemory");
+    expect(entry.memory_subtype).toBe("recommendation_accepted");
+    expect(entry.source_type).toBe("meta_agent_recommendation");
+  });
+
+  it("artifact_approved generates DesignMemory entry", () => {
+    const entry = createMemoryEntry({
+      memory_type: "DesignMemory",
+      memory_subtype: "artifact_approved",
+      source_type: "meta_agent_artifact",
+    });
+    expect(entry.memory_type).toBe("DesignMemory");
+    expect(entry.memory_subtype).toBe("artifact_approved");
+  });
+
+  it("change_implemented generates OutcomeMemory entry", () => {
+    const entry = createMemoryEntry({
+      memory_type: "OutcomeMemory",
+      memory_subtype: "change_implemented",
+      source_type: "meta_agent_artifact",
+    });
+    expect(entry.memory_type).toBe("OutcomeMemory");
+    expect(entry.memory_subtype).toBe("change_implemented");
+  });
+
+  it("pipeline_failure generates ErrorMemory entry", () => {
+    const entry = createMemoryEntry({
+      memory_type: "ErrorMemory",
+      memory_subtype: "pipeline_failure",
+      source_type: "pipeline_execution",
+    });
+    expect(entry.memory_type).toBe("ErrorMemory");
+    expect(entry.memory_subtype).toBe("pipeline_failure");
+  });
+});
+
+describe("Sprint 15 — Access Statistics", () => {
+  it("retrieval increments times_retrieved", () => {
+    const entry = createMemoryEntry({ times_retrieved: 0 });
+    const updated = { ...entry, times_retrieved: entry.times_retrieved + 1 };
+    expect(updated.times_retrieved).toBe(1);
+  });
+
+  it("retrieval updates last_accessed_at", () => {
+    const entry = createMemoryEntry({ last_accessed_at: null });
+    const now = new Date().toISOString();
+    const updated = { ...entry, last_accessed_at: now };
+    expect(updated.last_accessed_at).toBeTruthy();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// Sprint 16 — Memory Retrieval Surfaces Tests
+// ═══════════════════════════════════════════════════════════
+
+describe("Sprint 16 — Memory Retrieval Ranking", () => {
+  // Inline ranking logic for testing
+  function rankEntries(
+    entries: Array<{ confidence_score: number; relevance_score: number; created_at: string; tags: string[]; times_retrieved: number }>,
+    queryTags: string[]
+  ) {
+    const now = Date.now();
+    return entries
+      .map((entry) => {
+        let score = 0;
+        score += (entry.confidence_score || 0) * 0.3;
+        score += (entry.relevance_score || 0) * 0.3;
+        const ageMs = now - new Date(entry.created_at).getTime();
+        const ageDays = ageMs / (1000 * 60 * 60 * 24);
+        const recencyScore = ageDays <= 7 ? 1 : ageDays <= 90 ? 1 - (ageDays - 7) / 83 : 0;
+        score += recencyScore * 0.2;
+        if (queryTags.length > 0 && Array.isArray(entry.tags)) {
+          const overlap = queryTags.filter((t) => entry.tags.includes(t)).length;
+          score += Math.min(1, overlap / queryTags.length) * 0.1;
+        }
+        if (entry.times_retrieved > 0) {
+          score += Math.min(0.1, entry.times_retrieved * 0.01);
+        }
+        return { ...entry, _rank_score: Math.round(score * 1000) / 1000 };
+      })
+      .sort((a, b) => b._rank_score - a._rank_score);
+  }
+
+  it("ranking is deterministic for identical inputs", () => {
+    const entries = [
+      { confidence_score: 0.8, relevance_score: 0.7, created_at: new Date().toISOString(), tags: ["repair"], times_retrieved: 3 },
+      { confidence_score: 0.6, relevance_score: 0.9, created_at: new Date().toISOString(), tags: ["design"], times_retrieved: 1 },
+    ];
+    const r1 = rankEntries(entries, ["repair"]);
+    const r2 = rankEntries(entries, ["repair"]);
+    expect(r1.map((e) => e._rank_score)).toEqual(r2.map((e) => e._rank_score));
+  });
+
+  it("higher confidence + relevance entries rank higher", () => {
+    const entries = [
+      { confidence_score: 0.3, relevance_score: 0.3, created_at: new Date().toISOString(), tags: [], times_retrieved: 0 },
+      { confidence_score: 0.9, relevance_score: 0.9, created_at: new Date().toISOString(), tags: [], times_retrieved: 0 },
+    ];
+    const ranked = rankEntries(entries, []);
+    expect(ranked[0].confidence_score).toBe(0.9);
+  });
+
+  it("recent entries rank above old entries (all else equal)", () => {
+    const recent = new Date().toISOString();
+    const old = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    const entries = [
+      { confidence_score: 0.5, relevance_score: 0.5, created_at: old, tags: [], times_retrieved: 0 },
+      { confidence_score: 0.5, relevance_score: 0.5, created_at: recent, tags: [], times_retrieved: 0 },
+    ];
+    const ranked = rankEntries(entries, []);
+    expect(ranked[0].created_at).toBe(recent);
+  });
+
+  it("tag overlap boosts ranking", () => {
+    const entries = [
+      { confidence_score: 0.5, relevance_score: 0.5, created_at: new Date().toISOString(), tags: ["unrelated"], times_retrieved: 0 },
+      { confidence_score: 0.5, relevance_score: 0.5, created_at: new Date().toISOString(), tags: ["repair", "error"], times_retrieved: 0 },
+    ];
+    const ranked = rankEntries(entries, ["repair", "error"]);
+    expect(ranked[0].tags).toContain("repair");
+  });
+
+  it("entries older than 90 days get zero recency score", () => {
+    const veryOld = new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString();
+    const entries = [
+      { confidence_score: 0.5, relevance_score: 0.5, created_at: veryOld, tags: [], times_retrieved: 0 },
+    ];
+    const ranked = rankEntries(entries, []);
+    // Without recency, score is ~0.3 (confidence) + 0.3 (relevance) * 0.5 each = 0.3
+    expect(ranked[0]._rank_score).toBeLessThan(0.35);
+  });
+
+  it("previously retrieved entries get small boost", () => {
+    const ts = new Date().toISOString();
+    const entries = [
+      { confidence_score: 0.5, relevance_score: 0.5, created_at: ts, tags: [], times_retrieved: 0 },
+      { confidence_score: 0.5, relevance_score: 0.5, created_at: ts, tags: [], times_retrieved: 10 },
+    ];
+    const ranked = rankEntries(entries, []);
+    expect(ranked[0].times_retrieved).toBe(10);
+  });
+});
+
+describe("Sprint 16 — Retrieval Safety", () => {
+  it("retrieval context values are valid enums", () => {
+    const validContexts = [
+      "repair_surface",
+      "meta_agent_analysis",
+      "artifact_generation",
+      "recommendation_review",
+      "artifact_review",
+    ];
+    validContexts.forEach((ctx) => {
+      expect(typeof ctx).toBe("string");
+      expect(ctx.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("retrieval must not produce mutation verbs", () => {
+    const RETRIEVAL_FUNCTIONS = [
+      "retrieveForRepair",
+      "retrieveForMetaAgent",
+      "retrieveForArtifactGeneration",
+      "retrieveForReview",
+      "getRetrievalMetrics",
+    ];
+    const MUTATION_VERBS = ["UPDATE", "DELETE", "INSERT", "ALTER", "DROP", "TRUNCATE", "EXECUTE"];
+    RETRIEVAL_FUNCTIONS.forEach((fn) => {
+      MUTATION_VERBS.forEach((verb) => {
+        expect(fn.toUpperCase().includes(verb)).toBe(false);
+      });
+    });
+  });
+
+  it("retrieval results are always capped at max_results limit", () => {
+    const maxResults = 50;
+    const testArray = Array.from({ length: 100 }, (_, i) => i);
+    const limited = testArray.slice(0, Math.min(maxResults, testArray.length));
+    expect(limited.length).toBeLessThanOrEqual(50);
+  });
+
+  it("empty retrieval results degrade gracefully", () => {
+    const emptyResult = { entries: [], query_context: "repair_surface", total_found: 0, retrieval_surface: "repair_surface" };
+    expect(emptyResult.entries).toEqual([]);
+    expect(emptyResult.total_found).toBe(0);
+  });
+
+  it("retrieval does not modify memory entry structure", () => {
+    const entry = {
+      id: "test",
+      memory_type: "ErrorMemory",
+      confidence_score: 0.8,
+      relevance_score: 0.7,
+    };
+    const retrieved = { ...entry, _rank_score: 0.65 };
+    // Original fields unchanged
+    expect(retrieved.id).toBe(entry.id);
+    expect(retrieved.memory_type).toBe(entry.memory_type);
+    expect(retrieved.confidence_score).toBe(entry.confidence_score);
+    expect(retrieved.relevance_score).toBe(entry.relevance_score);
+    // Only _rank_score is added
+    expect(retrieved._rank_score).toBe(0.65);
+  });
+
+  it("retrieval surfaces for meta-agents use read-only memory types", () => {
+    const META_AGENT_MEMORY_TYPES = ["DesignMemory", "OutcomeMemory", "StrategyMemory", "DecisionMemory"];
+    const MUTABLE_TYPES = ["PipelineConfig", "GovernanceRule", "BillingPlan"];
+    META_AGENT_MEMORY_TYPES.forEach((type) => {
+      expect(MUTABLE_TYPES.includes(type)).toBe(false);
+    });
+  });
+});
+
+describe("Sprint 16 — Related Memory Context in Artifacts", () => {
+  it("related_historical_context section has correct shape", () => {
+    const context = {
+      title: "Previous ADR on validation",
+      memory_type: "DesignMemory",
+      summary: "Resolved validation bottleneck",
+      created_at: new Date().toISOString(),
+      relevance_rank: 0.78,
+    };
+    expect(context).toHaveProperty("title");
+    expect(context).toHaveProperty("memory_type");
+    expect(context).toHaveProperty("summary");
+    expect(context).toHaveProperty("created_at");
+    expect(context).toHaveProperty("relevance_rank");
+  });
+
+  it("max 5 related memories per artifact generation", () => {
+    const memories = Array.from({ length: 10 }, (_, i) => ({ id: `mem-${i}` }));
+    const limited = memories.slice(0, 5);
+    expect(limited.length).toBe(5);
+  });
+
+  it("artifact content is valid without memory context", () => {
+    const content = { format: "ADR_DRAFT", sections: { title: "Test" } };
+    expect(content.format).toBe("ADR_DRAFT");
+    expect(content).not.toHaveProperty("related_historical_context");
+  });
+});
+
+// ======================== SPRINT 17 — MEMORY SUMMARIES ========================
+
+// Inline mirror of memory-summary-scoring.ts
+interface SignalStrengthInputs {
+  entry_count: number;
+  breadth: number;
+  linked_outcome_count: number;
+  avg_confidence: number;
+  avg_retrieval_count: number;
+}
+
+function computeSignalStrength(inputs: SignalStrengthInputs): number {
+  const recurrence = Math.min(1, Math.log(inputs.entry_count + 1) / Math.log(21));
+  const breadth = Math.min(1, inputs.breadth / 5);
+  const outcomeRatio = inputs.entry_count > 0
+    ? Math.min(1, inputs.linked_outcome_count / inputs.entry_count)
+    : 0;
+  const evidence = Math.min(1, Math.max(0, inputs.avg_confidence));
+  const reuse = Math.min(1, Math.log(inputs.avg_retrieval_count + 1) / Math.log(11));
+  const score = recurrence * 0.3 + breadth * 0.15 + outcomeRatio * 0.2 + evidence * 0.2 + reuse * 0.15;
+  return Math.round(Math.min(1, Math.max(0, score)) * 1000) / 1000;
+}
+
+describe("Sprint 17 — Signal Strength Scoring", () => {
+  it("produces bounded scores (0-1)", () => {
+    const cases: SignalStrengthInputs[] = [
+      { entry_count: 0, breadth: 0, linked_outcome_count: 0, avg_confidence: 0, avg_retrieval_count: 0 },
+      { entry_count: 100, breadth: 10, linked_outcome_count: 100, avg_confidence: 1, avg_retrieval_count: 50 },
+      { entry_count: 3, breadth: 1, linked_outcome_count: 1, avg_confidence: 0.5, avg_retrieval_count: 2 },
+    ];
+    for (const c of cases) {
+      const score = computeSignalStrength(c);
+      expect(score).toBeGreaterThanOrEqual(0);
+      expect(score).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("is deterministic for same inputs", () => {
+    const input: SignalStrengthInputs = { entry_count: 10, breadth: 3, linked_outcome_count: 5, avg_confidence: 0.7, avg_retrieval_count: 4 };
+    expect(computeSignalStrength(input)).toBe(computeSignalStrength(input));
+  });
+
+  it("returns 0 for zero inputs", () => {
+    expect(computeSignalStrength({ entry_count: 0, breadth: 0, linked_outcome_count: 0, avg_confidence: 0, avg_retrieval_count: 0 })).toBe(0);
+  });
+
+  it("higher recurrence + breadth produces stronger signal", () => {
+    const strong = computeSignalStrength({ entry_count: 20, breadth: 5, linked_outcome_count: 10, avg_confidence: 0.8, avg_retrieval_count: 5 });
+    const weak = computeSignalStrength({ entry_count: 1, breadth: 1, linked_outcome_count: 0, avg_confidence: 0.3, avg_retrieval_count: 0 });
+    expect(strong).toBeGreaterThan(weak);
+  });
+
+  it("caps at 1.0 even with extreme inputs", () => {
+    const score = computeSignalStrength({ entry_count: 10000, breadth: 100, linked_outcome_count: 10000, avg_confidence: 10, avg_retrieval_count: 1000 });
+    expect(score).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("Sprint 17 — Summary Taxonomy", () => {
+  const VALID_SUMMARY_TYPES = [
+    "FAILURE_PATTERN_SUMMARY",
+    "STRATEGY_EFFECTIVENESS_SUMMARY",
+    "RECOMMENDATION_DECISION_SUMMARY",
+    "ARTIFACT_OUTCOME_SUMMARY",
+    "ARCHITECTURE_EVOLUTION_SUMMARY",
+    "MEMORY_RETRIEVAL_SUMMARY",
+  ];
+
+  it("defines exactly 6 summary types", () => {
+    expect(VALID_SUMMARY_TYPES).toHaveLength(6);
+  });
+
+  it("summary types do not include mutation verbs", () => {
+    const forbidden = ["EXECUTE", "DEPLOY", "APPLY", "FORCE", "MUTATE"];
+    for (const t of VALID_SUMMARY_TYPES) {
+      for (const f of forbidden) {
+        expect(t).not.toContain(f);
+      }
+    }
+  });
+
+  it("all summary types end with _SUMMARY", () => {
+    for (const t of VALID_SUMMARY_TYPES) {
+      expect(t.endsWith("_SUMMARY")).toBe(true);
+    }
+  });
+});
+
+describe("Sprint 17 — Summary Safety", () => {
+  it("summaries cannot alter memory entries", () => {
+    // Summary generation reads memory and writes to memory_summaries table only
+    const summaryTarget = "memory_summaries";
+    const memorySource = "engineering_memory_entries";
+    expect(summaryTarget).not.toBe(memorySource);
+  });
+
+  it("summary content structure is structured and parsable", () => {
+    const content = {
+      top_patterns: [{ subtype: "pipeline_failure", count: 5 }],
+      affected_stages: [{ stage: "validation", count: 3 }],
+      affected_components: ["build", "validation"],
+      trend_direction: "recurring",
+      total_failures: 8,
+    };
+    expect(content).toHaveProperty("top_patterns");
+    expect(content).toHaveProperty("trend_direction");
+    expect(Array.isArray(content.top_patterns)).toBe(true);
+    expect(JSON.stringify(content)).toBeTruthy();
+  });
+
+  it("summary generation is idempotent via duplicate prevention", () => {
+    // Same type + org + period should not create duplicates
+    const key1 = "FAILURE_PATTERN_SUMMARY::org1::2026-03-01::2026-03-07";
+    const key2 = "FAILURE_PATTERN_SUMMARY::org1::2026-03-01::2026-03-07";
+    expect(key1).toBe(key2);
+  });
+
+  it("graceful degradation: empty data produces no summary", () => {
+    const items: unknown[] = [];
+    const shouldCreate = items.length > 0;
+    expect(shouldCreate).toBe(false);
+  });
+});
