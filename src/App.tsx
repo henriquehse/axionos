@@ -55,7 +55,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 function AuthRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) return null;
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }
 
@@ -76,7 +76,7 @@ const App = () => (
                       <KeyboardShortcutsManager />
                       <Routes>
                       <Route path="/auth" element={<AuthRoute><Auth /></AuthRoute>} />
-                      <Route path="/" element={<Index />} />
+                      <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
                       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
                       <Route path="/journey" element={<ProtectedRoute><Journey /></ProtectedRoute>} />
                       <Route path="/onboarding" element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
@@ -104,7 +104,7 @@ const App = () => (
                       <Route path="/traffic-sentinel" element={<ProtectedRoute><TrafficSentinel /></ProtectedRoute>} />
                       <Route path="/neural-lab" element={<ProtectedRoute><NeuralLab /></ProtectedRoute>} />
                       <Route path="/leads" element={<ProtectedRoute><LeadDashboard /></ProtectedRoute>} />
-                      <Route path="*" element={<Navigate to="/" replace />} />
+                      <Route path="*" element={<Navigate to="/dashboard" replace />} />
                       </Routes>
                     </OnboardingProvider>
                   </WorkspaceProvider>
